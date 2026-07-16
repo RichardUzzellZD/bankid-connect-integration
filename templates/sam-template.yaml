@@ -1,0 +1,157 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Finnish BankID Integration for Amazon Connect
+
+Parameters:
+  Environment:
+    Type: String
+    Default: test
+    AllowedValues:
+      - test
+      - prod
+    Description: Environment name (test or prod)
+  
+  BankIDSecretName:
+    Type: String
+    Default: finnish-bankid-test-credentials
+    Description: AWS Secrets Manager secret name containing BankID credentials
+  
+  BankIDApiUrl:
+    Type: String
+    Default: https://appapi2.test.bankid.com/rp/v6.0
+    Description: BankID API endpoint URL
+
+Globals:
+  Function:
+    Runtime: python3.11
+    Timeout: 30
+    MemorySize: 256
+    Environment:
+      Variables:
+        ENVIRONMENT: !Ref Environment
+        BANKID_SECRET_NAME: !Ref BankIDSecretName
+        BANKID_API_URL: !Ref BankIDApiUrl
+
+Resources:
+  # BankID Authentication Lambda Function
+  BankIDAuthenticateFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'bankIDAuthenticateLambda-${Environment}'
+      Description: Initiate BankID authentication for Amazon Connect calls
+      CodeUri: ../lambdas/
+      Handler: bankIDAuthenticateLambda.lambda_handler
+      Timeout: 30
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${BankIDSecretName}-*'
+        - Statement:
+            - Effect: Allow
+              Action:
+                - logs:CreateLogGroup
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+              Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*'
+      Tags:
+        Project: BankIDConnect
+        Environment: !Ref Environment
+
+  # BankID Status Check Lambda Function
+  BankIDStatusCheckFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'bankIDStatusCheckLambda-${Environment}'
+      Description: Check BankID authentication status for Amazon Connect calls
+      CodeUri: ../lambdas/
+      Handler: bankIDStatusCheckLambda.lambda_handler
+      Timeout: 10
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${BankIDSecretName}-*'
+        - Statement:
+            - Effect: Allow
+              Action:
+                - logs:CreateLogGroup
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+              Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*'
+      Tags:
+        Project: BankIDConnect
+        Environment: !Ref Environment
+
+  # CloudWatch Log Groups
+  BankIDAuthenticateLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/bankIDAuthenticateLambda-${Environment}'
+      RetentionInDays: 30
+
+  BankIDStatusCheckLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/bankIDStatusCheckLambda-${Environment}'
+      RetentionInDays: 30
+
+  # CloudWatch Alarms for monitoring
+  BankIDAuthenticateErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'BankIDAuthenticate-Errors-${Environment}'
+      AlarmDescription: Alert when BankID authentication errors exceed threshold
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref BankIDAuthenticateFunction
+
+  BankIDStatusCheckErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'BankIDStatusCheck-Errors-${Environment}'
+      AlarmDescription: Alert when BankID status check errors exceed threshold
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 10
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref BankIDStatusCheckFunction
+
+Outputs:
+  BankIDAuthenticateFunctionArn:
+    Description: BankID Authenticate Lambda Function ARN
+    Value: !GetAtt BankIDAuthenticateFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-BankIDAuthenticateFunctionArn'
+  
+  BankIDStatusCheckFunctionArn:
+    Description: BankID Status Check Lambda Function ARN
+    Value: !GetAtt BankIDStatusCheckFunction.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-BankIDStatusCheckFunctionArn'
+  
+  BankIDAuthenticateFunctionName:
+    Description: BankID Authenticate Lambda Function Name
+    Value: !Ref BankIDAuthenticateFunction
+    Export:
+      Name: !Sub '${AWS::StackName}-BankIDAuthenticateFunctionName'
+  
+  BankIDStatusCheckFunctionName:
+    Description: BankID Status Check Lambda Function Name
+    Value: !Ref BankIDStatusCheckFunction
+    Export:
+      Name: !Sub '${AWS::StackName}-BankIDStatusCheckFunctionName'
